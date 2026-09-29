@@ -1,0 +1,153 @@
+# Textual Planning with Explicit Latent Transitions
+
+> When a large language model serves as a planner's transition model, every next state is generated token by token, which makes searching over many possible futures slow and expensive. EmbedPlan embeds the state and action with a frozen LLM, predicts the next-state embedding with a lightweight learned network, and returns the closest real state, evaluated on 9 classical planning domains under six settings that hold out progressively more of the data.
+
+By Eliezer Shlomi (Technion – Israel Institute of Technology), Ido Levy (IBM), Eilam Shapira (Technion – Israel Institute of Technology), Michael Katz (IBM), Guy Uziel (IBM), Segev Shlomov (IBM), Nir Mashkif (IBM), Roi Reichart (Technion – Israel Institute of Technology), Sarah Keren (Technion – Israel Institute of Technology), 2026.
+
+## What is this paper about?
+
+EmbedPlan is a transition model for planning that runs on frozen LLM text embeddings. Given a state and an action in natural language, it predicts the embedding of the next state with a small learned network and returns the nearest real state, instead of generating the next state token by token. The paper tests it on 9 classical planning domains under six protocols that hold out progressively more of the data, and maps where such learned transitions work and where they fail.
+
+## Important context
+
+- EmbedPlan is a transition component, not a complete planner: search composes many transitions, and the paper studies the single transition that search queries repeatedly. Action selection and search remain external.
+- Every prediction is a real state: the model predicts an embedding and returns the nearest state in a candidate pool, so retrieval needs a pool that contains the true successor.
+- Interpolation is the easy regime: test transitions come from training problems and distractors come from the whole domain, so even predicting no change (Identity) reaches 73.7% Hit@5 on the three reference domains. Hit@1 separates learned transitions from that floor.
+- The LLM comparison is matched in task, not in information: EmbedPlan has observed other transitions of the same problems, whereas the LLM is zero-shot.
+- The advantage of sparse lexical and symbolic features holds on templated states, where an action edits only a few facts of an otherwise identical text. Free-form descriptions, the regime the text interface targets, are not yet tested.
+- EmbedPlan: A transition model built on frozen text embeddings: it embeds natural language descriptions of the state and the action with a frozen LLM, predicts the embedding of the next state with a lightweight learned network, and returns the closest real state.
+- Transition model: A model that predicts how each action changes the current state, which planning requires.
+- Hit@k: The fraction of queries whose true next state ranks in the top k of a candidate pool. Unless stated otherwise the pool holds 128 states, the true successor and 127 distractors, so chance is 3.9% for Hit@5 and 0.8% for Hit@1.
+- Head: The learned state and action projection heads and the transition network, together. Only the head is trained, and the LLM encoder stays frozen.
+- Snapping: In multi-step rollout, each state prediction is replaced by the nearest real state the model retrieves, right or wrong, and that state becomes the next input.
+- Domain and problem: A domain fixes the action schemas, and a problem fixes the objects, the initial state, and the goal.
+- Grounded action: An instance of a lifted action schema with its objects filled in, such as pick-up(C) for the schema pick-up(?x).
+- Interpolation: The protocol that trains on 80% of a domain's transitions and tests on the other 20%, held out at random, so test transitions come from observed problems, with distractors from the whole domain.
+- Plan-Variant: The protocol that trains on some optimal plans and tests on other optimal plans of the same problems, with distractors from successors along alternative optimal plans, the hardest distractors the paper uses.
+- Extrapolation: The protocol that trains on about 80% of a domain's problems and tests on the other 20%, so test transitions come from unseen problems, with distractors from the query's own problem.
+- Multi-Domain: Extrapolation with one model for all nine domains at once.
+- Cross-Domain: The protocol that trains on one domain and tests on another, with distractors from the target domain.
+- Leave-One-Out: The protocol that trains on eight domains and tests on the ninth, with distractors from the target domain.
+- Identity and Offset: Two non-learned floors that need no training. Identity predicts the current state's embedding, and Offset adds the mean training displacement of the ground action or of its schema.
+- Lifted STRIPS induction: A reference method that infers each action schema's add and delete effects from the symbolic facts of each state. It serves as an oracle upper bound.
+- Action disambiguation: A training objective that separates the effects of different actions on the same state: the true action must yield a prediction closer to the next state than up to 50 alternative actions applied to the same state.
+
+## Data and methods
+
+A frozen LLM encoder (MPNet, BGE-M3, Qwen2.5-7B or Llama-3.3-70B) embeds natural language descriptions of the state and the action. Learned projection heads map both to a 128-dimensional space, a residual MLP predicts the next-state embedding, and the nearest candidate state by cosine similarity is returned. The head is trained with an InfoNCE state loss and an action disambiguation loss on 2.97M transitions from 9 ACPBench domains (Blocksworld, Depot, Ferry, Floortile, Goldminer, Grid, Logistics, Rovers, Satellite), and evaluated under six protocols against reference methods from no-change floors to lifted STRIPS induction.
+
+## Key results
+
+- Within observed problems (Interpolation, Llama-3.3-70B), Hit@5 is 99.7% against 128 candidates, and mean Hit@1 is 92.1%.
+- Given the identical ranking task over the same 128 candidates within observed problems, GPT-5.4 selects the true successor for 44% of Ferry and 92% of Logistics queries, against 99.0% and 96.3% for EmbedPlan. EmbedPlan ranks successors 101× faster end to end than generation through an LLM API (1.9 s per transition), and takes about 0.17 ms per transition with cached state embeddings.
+- When the candidate pool grows to every observed state of the domain, Hit@5 falls from 100.0% to 86.9% on Ferry (46,205 states) and from 99.9% to 74.9% on Logistics (13,373 states), while Hit@1 falls to 35.2% and 32.6%.
+- Snapping each prediction to the nearest real state keeps multi-step rollout within 92–99% of the accuracy obtained with the true state at each step (Interpolation, 1,000 candidate states, Ferry, Logistics and Blocksworld).
+- On unseen problems of an observed domain (Extrapolation), Hit@5 is 54.6%, 14 times chance, and varies widely by domain (26–76%). Larger encoders extrapolate better (26.8% for MPNet to 54.6% for Llama-3.3-70B), but none closes the gap.
+- On unseen domains, Hit@5 is 6.6% (Cross-Domain, one training domain) and 9.2% (Leave-One-Out, eight training domains), near the 3.9% chance level. One model for all nine domains (Multi-Domain) reaches 37.2% on unseen problems.
+- With the head, data and pool fixed, character 3–5 grams of the same text reach 79.4% Hit@5 on unseen problems against 56.8% with Llama-3.3-70B embeddings, and lifted STRIPS induction, given each state's symbolic facts, reaches 99.8% (Ferry, Logistics and Goldminer).
+
+## Limitations and scope
+
+- EmbedPlan is a transition component for discrete, domain-specific settings, not a domain-general planner, and must be trained per domain because cross-domain transfer fails.
+- Retrieval assumes a candidate pool that contains the true successor.
+- The domains are templated, so the paper has not yet tested the regime the text interface is meant for: states without a clean literal decomposition, where symbolic induction and lexical features would break.
+- Pool scaling, multi-step rollout, and LLM ranking are measured within observed problems, and rollouts cover short test trajectories (mean 2.2 steps).
+- Extrapolation rests on one or two held-out problems per domain, and the reference comparison covers three domains, without ablating the problem and goal text that every prompt shares.
+- The cross-domain failure has two plausible causes that the experiments do not separate: frozen embeddings organize states by surface form rather than by structural role, and the learned action semantics are domain-specific.
+- The paper does not yet integrate EmbedPlan into beam or tree search over long horizons on held-out problems. That is the direct next step.
+
+## Navigation guide
+
+- Section 3: the model, the six evaluation protocols (Table 1), the Hit@k metric and the reference methods.
+- Section 4.1: results within observed problems (accuracy, candidate-pool scaling, closed-loop rollout, action disambiguation).
+- Section 4.2: where generalization stops (Table 5 for the six protocols, Table 6 for the four encoders).
+- Section 4.3: what limits transfer, with the same head trained on other state representations (Table 7).
+- Section 5.1: limitations and future work.
+- Appendix A: protocol definitions. Appendix C: dataset statistics and domain descriptions. Appendix D: per-domain, cross-domain and Leave-One-Out results. Appendix J: error analysis.
+
+## Publication status
+
+Preprint on arXiv (2602.04557, 2026-02-04).
+
+## Questions and answers
+
+### What is EmbedPlan?
+
+EmbedPlan is a transition model for planning built on frozen text embeddings. Given a state and an action described in natural language, a frozen LLM embeds both, a lightweight learned network predicts the embedding of the next state, and the closest real state is returned. It is a transition component, not a complete planner: search composes many transitions, and the paper studies the single transition that search queries repeatedly.
+
+### Why not let an LLM generate the next state?
+
+Because generating every next state token by token makes search slow and expensive. When an LLM serves as the world model of a planner, each next state is generated with a full forward pass per token, which makes multi-step lookahead and rollout-based search prohibitively expensive in latency and cost. EmbedPlan leaves the semantic encoding to the frozen LLM and learns only the cheap dynamics, so each prediction is one learned vector step followed by retrieval.
+
+### Is EmbedPlan better than asking an LLM like GPT-5.4?
+
+Within observed problems, at picking the true next state, yes. Given the identical ranking task over the same 128 candidates, GPT-5.4 selects the true successor for 44% of Ferry and 92% of Logistics queries, against 99.0% and 96.3% for EmbedPlan. On Logistics the margin is small next to the spread across the paper's runs (91.2–96.3%). The comparison is matched in task, not in information: EmbedPlan has observed other transitions of the same problems, whereas the LLM is zero-shot, and on unseen problems its Ferry Hit@1 falls to 12.0%.
+
+### How fast is EmbedPlan?
+
+About 0.17 ms per transition with cached state embeddings, 11,215× faster than generating the next state through an LLM API (1.9 s per transition). End to end, including encoding the query texts with BGE-M3, it takes 18.6 ms, 101× faster. Training is a one-time cost per domain, an embedding pass plus about 15 minutes of training, which breaks even against autoregressive generation after about 4,300 transitions with Llama-3.3-70B, so it pays off for a domain that is planned in repeatedly.
+
+### What does Hit@5 measure, and what is chance?
+
+Hit@5 is the fraction of queries whose true next state ranks in the top 5 of a candidate pool. Unless stated otherwise the pool holds 128 states, the true successor and 127 distractors, so chance is 3.9% for Hit@5 and 0.8% for Hit@1. The paper emphasizes Hit@5 because it is robust to the pool size, and a top-5 list is also useful where a verifier can filter candidates.
+
+### How well does EmbedPlan generalize to new problems and new domains?
+
+It depends on what the model has seen. With the Llama-3.3-70B encoder, Hit@5 is 99.7% on held-out transitions of observed problems, 54.6% on unseen problems of an observed domain, and 6.6% on unseen domains, near the 3.9% chance level. Training on the other eight domains (Leave-One-Out) reaches 9.2%. One model trained on all nine domains reaches 37.2% on their unseen problems.
+
+### What limits transfer to unseen problems and domains?
+
+The paper traces the limit to the frozen state representation rather than to the learned transition. With the head, data and pool fixed, character 3–5 grams of the same text reach 79.4% Hit@5 on unseen problems of three domains, against 56.8% with Llama-3.3-70B embeddings. On unseen domains, the paper sees two plausible causes that its experiments do not separate: frozen embeddings organize states by surface form rather than by structural role, and the learned action semantics are domain-specific.
+
+### Does EmbedPlan stay accurate over several steps?
+
+Yes, over short horizons, when each prediction is snapped to a real state. If each predicted state is replaced by the nearest real state before the next step, rollout keeps 92–99% of the accuracy obtained with the true state at each step, on Ferry, Logistics and Blocksworld within observed problems. Without snapping, the predicted embedding drifts off the real states. The test trajectories are short (mean 2.2 steps on Ferry), so this establishes stability over short horizons only.
+
+### Does the true next state have to be among the candidates?
+
+Yes. Retrieval assumes a candidate pool that contains the true successor. The paper measures how accuracy degrades as the pool grows to every state observed in a domain. On Ferry (46,205 states), Hit@5 falls from 100.0% to 86.9%, and on Logistics (13,373 states) from 99.9% to 74.9%, while Hit@1 falls to 35.2% and 32.6%. The true successor thus stays in a short list against the full pool, though not reliably at rank one.
+
+### Which domains and encoders does the paper use?
+
+Nine classical PDDL domains from ACPBench, with states rendered as natural language: Blocksworld, Depot, Ferry, Floortile, Goldminer, Grid, Logistics, Rovers and Satellite, 2.97M transitions over 67 problems. The frozen encoders are MPNet (all-mpnet-base-v2), BGE-M3, Qwen2.5-7B and Llama-3.3-70B. Larger encoders extrapolate better, from 26.8% Hit@5 on unseen problems with MPNet to 54.6% with Llama-3.3-70B, but none closes the gap.
+
+### When is EmbedPlan worth using?
+
+When states and actions are available as text but no symbolic model is, so that the alternative is querying an LLM at every expansion. Action selection and search remain external to EmbedPlan. It must be trained per domain, with a one-time embedding pass plus about 15 minutes of training, so it pays off for a domain that is planned in repeatedly. The paper's classical domains have exact simulators, which makes them a controlled testbed.
+
+### When EmbedPlan misses, how far off is its top guess?
+
+By a few facts. When the true successor misses the top five on unseen problems, the top-ranked state typically differs from it in one to three facts (median 2), usually involving object locations or holdings within the same problem instance. These errors suggest the model captures coarse transition structure (correct problem context, approximate state region) but struggles to resolve fine-grained predicate changes, particularly when multiple objects undergo similar transformations.
+
+### Would fine-tuning the encoder help?
+
+Adapting the encoder already helps. Low-rank adaptation (LoRA) of BGE-M3 raises full-pool Hit@1 on unseen problems from 3.8% to 9.3% when the head is first trained with the encoder frozen, and to 6.2% with a cold joint start. Larger frozen encoders also extrapolate better. Because the encoder is a plug-in, the paper names a concrete target the framework can evaluate directly: an object-aware, order-invariant state encoder.
+
+### Can EmbedPlan tell apart the effects of different actions?
+
+Within observed problems it mostly can, and on unseen problems far less often. The paper applies every action applicable in a state and ranks the actions by how close their predictions come to the true next state. Acc@k is the fraction of queries whose true action ranks in the top k. Mean Acc@5 is 85.3% within observed problems (Acc@1 32.0%) and 16.2% on unseen problems, where training without the action loss reaches only 4.8%.
+
+### How often does EmbedPlan get a whole plan right?
+
+Under Plan-Variant, where the plans are unseen but their problems are observed, 22.6% of plans are correct at every step and mean per-step Hit@5 is 51.2%. Each step is ranked against successors along alternative optimal plans, the hardest distractors the paper uses: they are reachable and often differ from the target in a single fact. Plans of unseen problems fare far worse, at 10.1% per step and 3.3% of plans.
+
+## Links
+
+- [Project page](https://embedplan.github.io/): overview, results and citation
+- [Paper on arXiv](https://arxiv.org/abs/2602.04557): the full paper
+- [Code](https://github.com/embedplan/EmbedPlan): The EmbedPlan library and the paper's code, MIT license: a scikit-learn style estimator for your own text transitions, training and evaluation of the transition networks, and the scripts behind the paper's tables.
+
+## Abstract
+
+Planning requires a transition model that predicts how each action changes the current state. When a large language model (LLM) plays this role, every next state is generated token by token, which makes searching over many possible futures slow and expensive. Existing alternatives either still query an LLM at every step or require a symbolic model of the domain. We propose EmbedPlan, a transition model built on frozen text embeddings: it embeds natural language descriptions of the state and the action with a frozen LLM, predicts the embedding of the next state with a lightweight learned network, and returns the closest real state. Because this network can be trained on top of any encoder, EmbedPlan also provides a controlled way to compare text representations for learning transitions. We evaluate it on 9 classical planning domains, under six settings that hold out progressively more of the data, from transitions to entire domains, and against baselines ranging from predicting no change to learning symbolic action rules. On planning problems seen during training, EmbedPlan almost always ranks the true next state among its top five guesses, still does so for most queries even when every observed state is a candidate, and retains 92–99% of its single-step accuracy when predicting several steps ahead from its own outputs. Given the same candidate states as GPT-5.4, it picks the true next state more often while taking about 0.17 ms per transition with cached embeddings. Accuracy is lower on unseen problems and near chance on unseen domains, and the controlled comparison traces this limit to the state representation rather than to the learned transition.
+
+## Citation
+
+```bibtex
+@article{shlomi2026textual,
+  title   = {Textual Planning with Explicit Latent Transitions},
+  author  = {Shlomi, Eliezer and Levy, Ido and Shapira, Eilam and Katz, Michael and Uziel, Guy and Shlomov, Segev and Mashkif, Nir and Reichart, Roi and Keren, Sarah},
+  journal = {arXiv preprint arXiv:2602.04557},
+  year    = {2026}
+}
+```

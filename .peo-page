@@ -1,0 +1,13 @@
+{
+ "peo": 1,
+ "files": [
+  ".nojekyll",
+  "assets/figure1.png",
+  "assets/social.png",
+  "favicon.svg",
+  "index.html",
+  "llms.txt",
+  "robots.txt",
+  "sitemap.xml"
+ ]
+}
